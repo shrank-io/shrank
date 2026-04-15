@@ -5,8 +5,9 @@ import {
   Loader2,
   AlertTriangle,
   TrendingUp,
+  RefreshCw,
 } from "lucide-react";
-import { useStats, useDocuments } from "../api/hooks";
+import { useStats, useDocuments, useReprocessDocument } from "../api/hooks";
 import { thumbnailUrl } from "../api/client";
 import StatusBadge from "../components/common/StatusBadge";
 import TagBadge from "../components/common/TagBadge";
@@ -24,6 +25,7 @@ export default function Dashboard() {
   const { data: stats, isLoading } = useStats();
   const { data: recentData } = useDocuments({ limit: 10, sort: "created_at" });
   const recentDocs = recentData?.pages.flatMap((p) => p.documents) ?? [];
+  const reprocess = useReprocessDocument();
 
   if (isLoading) {
     return (
@@ -139,6 +141,19 @@ export default function Dashboard() {
                   </p>
                 </div>
                 <StatusBadge status={doc.status} />
+                {doc.status === "error" && (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      reprocess.mutate(doc.id);
+                    }}
+                    className="rounded-md p-1 text-ink-faint transition-colors hover:bg-surface-raised hover:text-ink"
+                    title="Retry processing"
+                  >
+                    <RefreshCw size={14} />
+                  </button>
+                )}
               </Link>
             ))}
             {recentDocs.length === 0 && (

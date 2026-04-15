@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
-import { FileText, Calendar } from "lucide-react";
+import { FileText, Calendar, RefreshCw } from "lucide-react";
 import { thumbnailUrl } from "../../api/client";
+import { useReprocessDocument } from "../../api/hooks";
 import StatusBadge from "../common/StatusBadge";
 import TagBadge from "../common/TagBadge";
 import AuthImage from "../common/AuthImage";
@@ -17,6 +18,7 @@ function formatDate(iso: string | null): string {
 
 export default function DocumentCard({ doc }: { doc: Document }) {
   const displayDate = doc.document_date ?? doc.captured_at;
+  const reprocess = useReprocessDocument();
 
   return (
     <Link
@@ -38,6 +40,24 @@ export default function DocumentCard({ doc }: { doc: Document }) {
         <div className="absolute top-2 right-2">
           <StatusBadge status={doc.status} />
         </div>
+        {/* Retry button for errored documents */}
+        {doc.status === "error" && (
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              reprocess.mutate(doc.id);
+            }}
+            disabled={reprocess.isPending}
+            className="absolute bottom-2 right-2 flex items-center gap-1 rounded-md bg-surface/90 px-2 py-1 text-xs font-medium text-danger backdrop-blur transition-colors hover:bg-danger/20 hover:text-danger"
+          >
+            <RefreshCw
+              size={12}
+              className={reprocess.isPending ? "animate-spin" : ""}
+            />
+            {reprocess.isPending ? "Retrying..." : "Retry"}
+          </button>
+        )}
       </div>
 
       {/* Info */}
