@@ -78,7 +78,7 @@ export default function GraphPage() {
           <div className="flex h-full items-center justify-center text-ink-faint">
             <p>Loading graph...</p>
           </div>
-        ) : graph && graph.nodes.length > 0 ? (
+        ) : graph?.nodes?.length > 0 ? (
           <GraphExplorer data={graph} focusId={docId} />
         ) : (
           <div className="flex h-full items-center justify-center text-ink-faint">

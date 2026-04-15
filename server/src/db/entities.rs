@@ -105,6 +105,42 @@ pub async fn list_all(db: &Db, limit: i64, offset: i64) -> Result<(Vec<Entity>, 
     .map_err(AppError::from)
 }
 
+/// Get all entities linked to a specific document, with their roles.
+pub async fn get_entities_for_document(
+    db: &Db,
+    document_id: &str,
+) -> Result<Vec<(Entity, String)>, AppError> {
+    let document_id = document_id.to_string();
+    let conn = db.read().await?;
+    conn.interact(move |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT e.id, e.entity_type, e.value, e.display_name, e.metadata, e.created_at, de.role
+             FROM entities e
+             JOIN document_entities de ON de.entity_id = e.id
+             WHERE de.document_id = ?1",
+        )?;
+        let results = stmt
+            .query_map([&document_id], |row| {
+                let metadata_str: Option<String> = row.get("metadata")?;
+                Ok((
+                    Entity {
+                        id: row.get("id")?,
+                        entity_type: row.get("entity_type")?,
+                        value: row.get("value")?,
+                        display_name: row.get("display_name")?,
+                        metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
+                        created_at: row.get("created_at")?,
+                    },
+                    row.get::<_, String>("role")?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok::<Vec<(Entity, String)>, rusqlite::Error>(results)
+    })
+    .await?
+    .map_err(AppError::from)
+}
+
 pub async fn get_documents_for_entity(
     db: &Db,
     entity_id: &str,
