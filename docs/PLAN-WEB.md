@@ -21,7 +21,7 @@ You are building the Shrank web interface — the browser-based UI for browsing,
 Three other agents are working in parallel:
 
 - **Backend** — Rust/Axum on port `3420`. You talk to it via REST API. Don't build this.
-- **Inference sidecar** — Python/FastAPI on port `3421`. You never talk to this directly. Don't build this.
+- **vllm-mlx** — Inference server on port `8000`. The backend calls it directly. You never interact with this.
 - **iOS app** — Swift/SwiftUI. Separate client, same backend API. Don't build this.
 
 ## Key interfaces to respect

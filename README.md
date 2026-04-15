@@ -18,12 +18,12 @@ Private, local-first document archive. Snap a photo of any paper mail — local 
 ```
 iPhone (SwiftUI)  ◄──  Tailscale  ──►  Mac (M1 Max)
   Camera capture                         Rust/Axum backend (SQLite + FTS5 + sqlite-vec)
-  Local SQLite+FTS5                      mlx-vlm sidecar (Gemma 4 26B MoE)
+  Local SQLite+FTS5                      vllm-mlx (Gemma 4 26B MoE)
   Offline search                         React web UI
 ```
 
 - **Backend**: Rust / Axum — single binary, SQLite for everything
-- **AI**: Gemma 4 26B MoE via mlx-vlm on Apple Silicon (~75 tok/s on M1 Max)
+- **AI**: Gemma 4 26B MoE via vllm-mlx on Apple Silicon
 - **Search**: 4-layer hybrid — structured filters, full-text (FTS5), semantic (sqlite-vec), knowledge graph (recursive CTEs)
 - **Networking**: Tailscale (WireGuard) — encrypted P2P, no port forwarding
 - **iOS**: Swift / SwiftUI with VisionKit document scanner, offline-first with background sync

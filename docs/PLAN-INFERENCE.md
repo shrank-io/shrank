@@ -1,50 +1,51 @@
-# Plan: Inference Sidecar (Python / mlx-vlm)
+# Plan: Inference (vllm-mlx)
 
-You are building the AI inference sidecar — the component that runs Gemma 4 on Apple Silicon and extracts structured data from document images.
+The inference layer runs Gemma 4 on Apple Silicon via vllm-mlx. The Rust backend calls its OpenAI-compatible API directly — there is no Python sidecar.
 
-**Read `docs/SHRANK.md` first.** It has the full spec: sidecar architecture (Section 5), API contract (Section 5.2), prompt engineering (Section 11), and project structure (Section 8.2).
+**Read `docs/SHRANK.md` first.** It has the full spec: inference architecture (Section 5), prompt engineering (Section 11), and project structure (Section 8.2).
 
 ## What you own
 
-- Python/FastAPI server on `127.0.0.1:3421` (localhost only, never exposed to network)
-- `POST /extract` — receive a base64 document image, run Gemma 4 vision, return structured JSON
-- `POST /embed` — receive text, return embedding vector (via Ollama or sentence-transformers)
-- `GET /health` — report model status, GPU memory usage
-- Prompt engineering: the extraction prompt that produces reliable structured JSON (Section 11)
-- JSON response parsing: extract valid JSON from LLM output, handle markdown fences, partial responses
-- Startup: load model into GPU memory, keep it warm between requests
+- `inference/run.sh` — launcher script for vllm-mlx
+- `inference/pyproject.toml` — vllm-mlx dependency (managed by uv)
+- Model selection and configuration via env vars
+
+## How it works
+
+vllm-mlx runs as a standalone server on `127.0.0.1:8000` (localhost only). The Rust backend calls it via:
+
+- `POST /v1/chat/completions` — vision extraction (base64 image + extraction prompt) and chat
+- `POST /v1/embeddings` — text embeddings for semantic search
+- `GET /v1/models` — health check
+
+Prompt building, JSON response parsing, and relationship inference all happen in the Rust backend (`server/src/inference/`).
 
 ## What you do NOT own
 
-Three other agents are working in parallel:
+- **Rust backend** (`server/src/inference/`) — prompt construction, JSON parsing, relationship inference. These used to live in Python but have been moved to Rust.
+- **Web UI** — no direct interaction with inference.
+- **iOS app** — no direct interaction with inference.
 
-- **Backend** — Rust/Axum on port `3420`. It calls your HTTP endpoints. Don't build this.
-- **Web UI** — React/Vite. No direct interaction with you. Don't build this.
-- **iOS app** — Swift/SwiftUI. No direct interaction with you. Don't build this.
+## Configuration
 
-## Key interfaces to respect
+Environment variables for `run.sh`:
 
-The sidecar API contract (Section 5.2) is the shared interface with the backend. The request/response schemas must match exactly so the backend agent's client works with your server.
-
-**Extract response schema** (must match):
-```
-language, sender, sender_normalized, document_date, document_type, subject, summary,
-extracted_text, amounts[], dates[], reference_ids[], tags[], entities[],
-related_references[], confidence, extraction_notes
-```
-
-**Embed response schema**: `{ embedding: float[], model: string, dimensions: int }`
-
-## Project structure
-
-Put everything under `inference/` in the repo root. See Section 8.2 for the layout.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SHRANK_MODEL` | `mlx-community/gemma-4-26b-a4b-it-4bit` | Vision/chat model |
+| `SHRANK_EMBED_MODEL` | `mlx-community/all-MiniLM-L6-v2-4bit` | Embedding model |
+| `SHRANK_VLLM_HOST` | `127.0.0.1` | Bind address |
+| `SHRANK_VLLM_PORT` | `8000` | Port |
 
 ## Start with
 
-1. `pyproject.toml` with dependencies (fastapi, uvicorn, mlx-vlm, pydantic)
-2. FastAPI app with the three endpoints
-3. Extraction prompt from Section 11
-4. JSON parser that handles LLM output quirks (fences, trailing text, partial JSON)
-5. Embedding endpoint (Ollama subprocess or httpx call)
-6. Health endpoint with GPU memory reporting
-7. `run.sh` startup script
+```bash
+cd inference && ./run.sh
+```
+
+Or directly:
+
+```bash
+vllm-mlx serve mlx-community/gemma-4-26b-a4b-it-4bit \
+    --embedding-model mlx-community/all-MiniLM-L6-v2-4bit
+```

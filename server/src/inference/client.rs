@@ -24,6 +24,13 @@ struct ChatCompletionRequest {
     messages: Vec<ChatMessage>,
     max_tokens: u32,
     temperature: f64,
+    /// Gemma 4: disable thinking mode so we get clean JSON output
+    chat_template_kwargs: ChatTemplateKwargs,
+}
+
+#[derive(Serialize)]
+struct ChatTemplateKwargs {
+    enable_thinking: bool,
 }
 
 #[derive(Serialize)]
@@ -142,6 +149,9 @@ impl InferenceClient {
             ],
             max_tokens: 4096,
             temperature: 0.1,
+            chat_template_kwargs: ChatTemplateKwargs {
+                enable_thinking: false,
+            },
         };
 
         let resp = self
@@ -229,6 +239,9 @@ impl InferenceClient {
             messages: chat_messages,
             max_tokens,
             temperature,
+            chat_template_kwargs: ChatTemplateKwargs {
+                enable_thinking: false,
+            },
         };
 
         let resp = self

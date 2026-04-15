@@ -5,7 +5,9 @@ use crate::AppError;
 ///
 /// Handles markdown fences, preamble/trailing text, and truncated output.
 pub fn parse_llm_json(raw: &str) -> Result<serde_json::Value, AppError> {
-    let text = raw.trim();
+    // 0. Strip Gemma 4 thinking channel tokens if present
+    let text = strip_thinking_channel(raw.trim());
+    let text = text.trim();
 
     // 1. Strip markdown code fences
     let stripped = strip_fences(text);
@@ -39,6 +41,23 @@ pub fn parse_llm_json(raw: &str) -> Result<serde_json::Value, AppError> {
         "could not extract valid JSON from LLM response: {}",
         &raw[..raw.len().min(200)]
     )))
+}
+
+/// Strip Gemma 4 thinking channel blocks: `<|channel>thought\n...<channel|>`
+fn strip_thinking_channel(text: &str) -> &str {
+    // If the response starts with a thinking block, skip past its end
+    if let Some(end) = text.find("<channel|>") {
+        let after = &text[end + "<channel|>".len()..];
+        return after.trim();
+    }
+    // Also handle case where thinking tokens were partially stripped
+    if text.starts_with("<|channel>") {
+        // Find the end of the thinking block or give up
+        if let Some(pos) = text.find('{') {
+            return &text[pos..];
+        }
+    }
+    text
 }
 
 fn strip_fences(text: &str) -> String {

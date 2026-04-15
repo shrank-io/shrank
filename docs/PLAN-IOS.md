@@ -23,7 +23,7 @@ You are building the Shrank iOS app — the primary capture device for photograp
 Three other agents are working in parallel:
 
 - **Backend** — Rust/Axum on port `3420`. You talk to it over Tailscale via REST API. Don't build this.
-- **Inference sidecar** — Python/FastAPI. You never interact with this. Don't build this.
+- **vllm-mlx** — Inference server on port `8000`. The backend calls it directly. You never interact with this.
 - **Web UI** — React/Vite. Separate client, same backend API. Don't build this.
 
 ## Key interfaces to respect

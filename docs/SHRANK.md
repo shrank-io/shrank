@@ -18,12 +18,12 @@
 2. [Architecture Overview](#2-architecture-overview)
 3. [Technology Stack](#3-technology-stack)
 4. [Data Model](#4-data-model)
-5. [Inference Pipeline — Gemma 4 via mlx-vlm](#5-inference-pipeline--gemma-4-via-mlx-vlm)
+5. [Inference Pipeline — Gemma 4 via vllm-mlx](#5-inference-pipeline--gemma-4-via-vllm-mlx)
 6. [Search Architecture](#6-search-architecture)
 7. [Sync Protocol](#7-sync-protocol)
 8. [Component Specs](#8-component-specs)
    - 8.1 [Rust Backend (Axum)](#81-rust-backend-axum)
-   - 8.2 [Inference Sidecar (Python / mlx-vlm)](#82-inference-sidecar-python--mlx-vlm)
+   - 8.2 [Inference (vllm-mlx)](#82-inference-vllm-mlx)
    - 8.3 [iOS App (Swift / SwiftUI)](#83-ios-app-swift--swiftui)
    - 8.4 [Web UI (React / Vite)](#84-web-ui-react--vite)
 9. [Project Structure](#9-project-structure)
@@ -46,7 +46,7 @@ Shrank is a fully private, self-hosted document archive for paper mail. The name
 - **Zero-config intelligence**: No predefined categories, no language settings, no OCR configuration. The LLM detects language, extracts entities, infers categories, and builds relationships — all from the document image alone.
 - **Offline-first**: The phone app works fully offline. Documents queue locally and sync when the server becomes reachable. The phone maintains a complete searchable copy of the archive.
 - **Single-user simplicity**: This is a personal tool. No multi-tenancy, no RBAC, no user management. One person, one archive.
-- **LLM-agnostic**: Default stack is Gemma 4 26B MoE via mlx-vlm on Apple Silicon, but the inference interface is a clean HTTP contract — swap in Ollama, vLLM, or any OpenAI-compatible endpoint.
+- **LLM-agnostic**: Default stack is Gemma 4 26B MoE via vllm-mlx on Apple Silicon. The backend talks to any OpenAI-compatible API — swap in Ollama, vLLM, or any other endpoint.
 
 ---
 
@@ -68,11 +68,11 @@ Shrank is a fully private, self-hosted document archive for paper mail. The name
                                                                 │  └──────────┬────────────────┘  │
                                                                 │             │ HTTP localhost     │
                                                                 │  ┌──────────▼────────────────┐  │
-                                                                │  │  mlx-vlm Sidecar          │  │
-                                                                │  │  (Python/FastAPI)         │  │
+                                                                │  │  vllm-mlx                 │  │
+                                                                │  │  OpenAI-compatible API    │  │
                                                                 │  │                           │  │
                                                                 │  │  Gemma 4 26B MoE          │  │
-                                                                │  │  Vision + Extraction      │  │
+                                                                │  │  Vision + Chat            │  │
                                                                 │  │  Embedding generation     │  │
                                                                 │  └───────────────────────────┘  │
                                                                 │                                 │
@@ -91,8 +91,8 @@ Shrank is a fully private, self-hosted document archive for paper mail. The name
 3. **Queue**: Document added to sync queue with status `pending`.
 4. **Sync**: When Tailscale peer (Mac) is reachable, phone uploads image via `POST /api/documents`.
 5. **Ingest**: Axum backend receives image, stores original + generates thumbnail.
-6. **Extract**: Backend sends image to mlx-vlm sidecar → Gemma 4 returns structured JSON (language, sender, date, type, categories/tags, entities, summary, extracted text).
-7. **Embed**: Backend requests embedding vector for the extracted text (via sidecar or dedicated embedding model).
+6. **Extract**: Backend sends image to vllm-mlx → Gemma 4 returns structured JSON (language, sender, date, type, categories/tags, entities, summary, extracted text).
+7. **Embed**: Backend requests embedding vector for the extracted text via vllm-mlx.
 8. **Index**: Metadata written to SQLite, text indexed in FTS5, vector stored in sqlite-vec, entity edges created in graph tables.
 9. **Sync-back**: Next time phone syncs, it pulls new metadata + thumbnail + embedding for local search.
 
@@ -107,8 +107,8 @@ Shrank is a fully private, self-hosted document archive for paper mail. The name
 | **Full-text search** | SQLite FTS5 | Built into SQLite. BM25 ranking. Supports custom tokenizers for German compound words. |
 | **Vector search** | sqlite-vec | SQLite extension for vector similarity search. No extra process. Sub-millisecond for <100k docs. |
 | **Graph relationships** | SQLite tables + recursive CTEs | Entities and document relationships stored as edges. Graph traversal via `WITH RECURSIVE`. No Neo4j overhead. |
-| **LLM inference** | mlx-vlm + FastAPI sidecar | Gemma 4 26B MoE on Apple Silicon via MLX. Native Metal acceleration. ~75 tok/s on M1 Max. |
-| **Embeddings** | nomic-embed-text (via Ollama) OR Gemma 4 E4B | Lightweight embedding model for semantic search vectors. Runs alongside main model. |
+| **LLM inference** | vllm-mlx | Gemma 4 26B MoE on Apple Silicon via MLX. OpenAI-compatible API. Native Metal acceleration. Continuous batching. |
+| **Embeddings** | vllm-mlx (all-MiniLM-L6-v2) | Lightweight 384-dim embedding model for semantic search vectors. Served by vllm-mlx alongside main model. |
 | **iOS app** | Swift / SwiftUI | Native camera integration, background sync, offline SQLite. No Flutter overhead for a capture-first app. |
 | **Web UI** | React / Vite / TailwindCSS | Modern, fast dev experience. Served as static files by Axum in production. |
 | **Networking** | Tailscale | WireGuard-based mesh VPN. Encrypted P2P. Already proven in irrigation project. |
@@ -193,7 +193,7 @@ END;
 
 ```sql
 -- Vector table for semantic search
--- Dimension depends on embedding model: nomic-embed-text = 768, Gemma = varies
+-- Dimension depends on embedding model: all-MiniLM-L6-v2 = 384, nomic-embed-text = 768
 CREATE VIRTUAL TABLE documents_vec USING vec0(
     document_id TEXT PRIMARY KEY,
     embedding FLOAT[768]
@@ -306,52 +306,51 @@ ORDER BY d.document_date DESC;
 
 ---
 
-## 5. Inference Pipeline — Gemma 4 via mlx-vlm
+## 5. Inference Pipeline — Gemma 4 via vllm-mlx
 
-### 5.1 Sidecar Architecture
+### 5.1 Architecture
 
-The inference engine runs as a separate Python process alongside the Rust backend. Communication is via HTTP on localhost. This separation means:
+vllm-mlx runs as a standalone inference server on `127.0.0.1:8000`. The Rust backend calls its OpenAI-compatible API directly — no Python sidecar. This means:
 
-- Rust backend can restart independently of the model
-- Model stays warm in memory between requests
-- Easy to swap inference backends (mlx-vlm → Ollama → vLLM)
-- Python ecosystem for ML, Rust ecosystem for everything else
-
-```
-Axum Backend                    mlx-vlm Sidecar
-     │                               │
-     │  POST /extract                 │
-     │  {image: base64}  ───────────► │  Load image
-     │                                │  Run Gemma 4 26B MoE vision
-     │                                │  Parse structured JSON
-     │  ◄─────────────────────────    │  Return extraction result
-     │  {sender, date, tags, ...}     │
-     │                                │
-     │  POST /embed                   │
-     │  {text: "..."}    ───────────► │  Run embedding model
-     │  ◄─────────────────────────    │  Return [768-dim vector]
-     │  {embedding: [...]}            │
-     │                                │
-     │  GET /health                   │
-     │               ───────────────► │  Model loaded? GPU ok?
-     │  ◄─────────────────────────    │  {status: "ready", model: "gemma-4-26b-a4b-it"}
-     │                                │
-```
-
-### 5.2 Sidecar API Contract
+- Model stays warm in memory between requests via vllm-mlx's continuous batching
+- Easy to swap inference backends — any OpenAI-compatible API works
+- Prompt building, JSON response parsing, and relationship inference all happen in Rust
+- Single dependency: just run `vllm-mlx serve <model>`
 
 ```
-POST /extract
-Content-Type: application/json
+Axum Backend                           vllm-mlx (:8000)
+     │                                      │
+     │  POST /v1/chat/completions           │
+     │  {image + extraction prompt}  ──────►│  Run Gemma 4 26B MoE vision
+     │  ◄──────────────────────────────     │  Return chat completion
+     │  Parse JSON from LLM output          │
+     │  Extract structured metadata         │
+     │                                      │
+     │  POST /v1/embeddings                 │
+     │  {input: ["text"]}  ────────────────►│  Run embedding model
+     │  ◄──────────────────────────────     │  Return [384-dim vector]
+     │                                      │
+     │  GET /v1/models                      │
+     │  ────────────────────────────────────►│  List loaded models
+     │  ◄──────────────────────────────     │  Health check
+     │                                      │
+```
 
-Request:
-{
-  "image_base64": "<base64 encoded JPEG/PNG>",
-  "existing_tags": ["health_insurance", "aok", "tax", ...],  // for tag consistency
-  "existing_senders": ["AOK Bayern", "Deutsche Rentenversicherung", ...]  // for sender normalization
-}
+### 5.2 Extraction Flow
 
-Response:
+The Rust backend handles extraction end-to-end:
+
+1. Build the extraction prompt with existing tags/senders for taxonomy consistency (`server/src/inference/prompt.rs`)
+2. Send a vision chat completion request to vllm-mlx with the document image as base64 data URL
+3. Parse the LLM's JSON response, handling markdown fences, preamble text, and truncated output (`server/src/inference/extraction.rs`)
+4. Validate and normalize the extraction result (tag normalization, confidence clamping, entity parsing)
+5. Infer relationships with existing documents (reference matching, sender follow-ups, entity linking)
+
+### 5.3 Extraction Response Schema
+
+The LLM returns a JSON object with these fields (parsed and stored by the Rust backend):
+
+```json
 {
   "language": "de",
   "sender": "AOK Bayern",
@@ -361,117 +360,23 @@ Response:
   "subject": "Beitragsanpassung zum 01.07.2026",
   "extracted_text": "Sehr geehrter Herr ...",
   "amounts": [
-    {"value": 274.50, "currency": "EUR", "label": "Neuer Monatsbeitrag"},
-    {"value": 262.30, "currency": "EUR", "label": "Bisheriger Beitrag"}
+    {"value": 274.50, "currency": "EUR", "label": "Neuer Monatsbeitrag"}
   ],
   "dates": [
-    {"date": "2026-07-01", "label": "Gültig ab"},
-    {"date": "2026-04-30", "label": "Widerspruchsfrist"}
+    {"date": "2026-07-01", "label": "Gültig ab"}
   ],
   "reference_ids": [
-    {"type": "policy", "value": "VN-987654321"},
-    {"type": "reference", "value": "BN/2026/03/4567"}
+    {"type": "policy", "value": "VN-987654321"}
   ],
-  "tags": ["health_insurance", "aok", "premium_adjustment", "beitragsanpassung"],
+  "tags": ["health_insurance", "aok", "premium_adjustment"],
   "entities": [
-    {"type": "organization", "value": "AOK Bayern", "role": "sender"},
-    {"type": "policy", "value": "VN-987654321", "role": "referenced_policy"}
+    {"type": "organization", "value": "AOK Bayern", "role": "sender"}
   ],
-  "summary": "AOK Bayern notifies of a premium increase from €262.30 to €274.50 effective July 2026, with objection deadline April 30.",
+  "summary": "AOK Bayern notifies of a premium increase effective July 2026.",
   "confidence": 0.92,
-  "related_references": ["BN/2026/03/4567"]  // references to look up in existing docs
+  "related_references": ["BN/2026/03/4567"],
+  "extraction_notes": ""
 }
-
-POST /embed
-Content-Type: application/json
-
-Request:  { "text": "..." }
-Response: { "embedding": [0.012, -0.034, ...], "model": "nomic-embed-text", "dimensions": 768 }
-
-GET /health
-Response: { "status": "ready", "model": "gemma-4-26b-a4b-it", "backend": "mlx-vlm", "gpu_memory_used_gb": 14.2 }
-```
-
-### 5.3 Inference Sidecar Implementation
-
-```python
-# inference/server.py — thin FastAPI wrapper around mlx-vlm
-# This is the complete sidecar. Keep it minimal.
-
-from fastapi import FastAPI
-from pydantic import BaseModel
-from mlx_vlm import load, generate
-import base64, json, tempfile, os
-
-app = FastAPI()
-
-# Load model once at startup — stays warm in GPU memory
-MODEL_PATH = os.environ.get("SHRANK_MODEL", "mlx-community/gemma-4-26b-a4b-it-4bit")
-model, processor = load(MODEL_PATH)
-
-class ExtractionRequest(BaseModel):
-    image_base64: str
-    existing_tags: list[str] = []
-    existing_senders: list[str] = []
-
-class EmbedRequest(BaseModel):
-    text: str
-
-@app.post("/extract")
-async def extract(req: ExtractionRequest):
-    # Write image to temp file (mlx-vlm needs file path)
-    img_bytes = base64.b64decode(req.image_base64)
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
-        f.write(img_bytes)
-        img_path = f.name
-
-    try:
-        prompt = build_extraction_prompt(req.existing_tags, req.existing_senders)
-        messages = [{"role": "user", "content": [
-            {"type": "image", "url": img_path},
-            {"type": "text", "text": prompt},
-        ]}]
-        formatted = processor.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, tokenize=False
-        )
-        # Use high token budget for OCR quality
-        result = generate(
-            model, processor, formatted, [img_path],
-            max_tokens=4096, temperature=0.1,
-            repetition_penalty=1.1
-        )
-        parsed = parse_llm_json(result.text)
-        return parsed
-    finally:
-        os.unlink(img_path)
-
-@app.post("/embed")
-async def embed(req: EmbedRequest):
-    # For embeddings, use a lightweight model via ollama or sentence-transformers
-    # This is a placeholder — actual implementation depends on chosen embedding model
-    import subprocess, json
-    result = subprocess.run(
-        ["ollama", "embed", "nomic-embed-text", req.text],
-        capture_output=True, text=True
-    )
-    data = json.loads(result.stdout)
-    return {"embedding": data["embedding"], "model": "nomic-embed-text", "dimensions": 768}
-
-@app.get("/health")
-async def health():
-    return {"status": "ready", "model": MODEL_PATH, "backend": "mlx-vlm"}
-
-def build_extraction_prompt(existing_tags, existing_senders):
-    """See Section 11 for full prompt engineering details."""
-    # ... (defined in detail in Section 11)
-    pass
-
-def parse_llm_json(raw_text):
-    """Extract JSON from LLM response, handling markdown fences etc."""
-    text = raw_text.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-    return json.loads(text)
 ```
 
 ### 5.4 Relationship Inference
@@ -685,11 +590,13 @@ shrank-server/
 │   │   ├── search.rs        # GET /search
 │   │   ├── sync.rs          # GET /sync, sync protocol endpoints
 │   │   ├── images.rs        # GET /originals/:id, /thumbnails/:id
-│   │   └── graph.rs         # GET /graph/:id (related documents)
+│   │   ├── graph.rs         # GET /graph/:id (related documents)
+│   │   └── chat.rs          # POST /chat
 │   ├── inference/
 │   │   ├── mod.rs
-│   │   ├── client.rs        # HTTP client to mlx-vlm sidecar
-│   │   ├── extraction.rs    # Parse + validate LLM response
+│   │   ├── client.rs        # HTTP client to vllm-mlx (OpenAI-compatible API)
+│   │   ├── prompt.rs        # Extraction prompt templates
+│   │   ├── extraction.rs    # Parse LLM JSON (fence stripping, truncation repair)
 │   │   └── relationships.rs # Post-extraction relationship inference
 │   ├── images/
 │   │   ├── mod.rs
@@ -746,36 +653,20 @@ GET    /api/images/original/:id    # Full resolution original
 GET    /api/images/thumbnail/:id   # WebP thumbnail
 
 # System
-GET    /api/health                 # Server + inference sidecar status
+GET    /api/health                 # Server + vllm-mlx status
 GET    /api/stats                  # Document count, tag cloud, storage used
 ```
 
-### 8.2 Inference Sidecar (Python / mlx-vlm)
+### 8.2 Inference (vllm-mlx)
 
 ```
-shrank-inference/
-├── pyproject.toml
-├── server.py              # FastAPI app (see Section 5.3)
-├── prompts/
-│   └── extraction.py      # Prompt templates (see Section 11)
-├── parsers/
-│   └── response.py        # JSON extraction + validation from LLM output
-└── run.sh                 # Startup script: uvicorn server:app --host 127.0.0.1 --port 3421
+inference/
+├── pyproject.toml         # vllm-mlx dependency (managed by uv)
+├── run.sh                 # Launcher: vllm-mlx serve <model> --embedding-model <model>
+└── uv.lock
 ```
 
-#### Dependencies
-
-```toml
-[project]
-dependencies = [
-    "fastapi>=0.115",
-    "uvicorn>=0.32",
-    "mlx-vlm>=0.4.3",
-    "pydantic>=2.0",
-]
-```
-
-The sidecar listens only on `127.0.0.1:3421` — never exposed to the network.
+vllm-mlx runs on `127.0.0.1:8000` — never exposed to the network. Start with `./inference/run.sh` or directly with `vllm-mlx serve`. Prompt building and JSON response parsing live in the Rust backend (`server/src/inference/`).
 
 ### 8.3 iOS App (Swift / SwiftUI)
 
@@ -939,10 +830,9 @@ shrank/
 │   ├── Cargo.toml
 │   └── src/
 │
-├── inference/                     # Python mlx-vlm sidecar (see 8.2)
+├── inference/                     # vllm-mlx launcher (see 8.2)
 │   ├── pyproject.toml
-│   ├── server.py
-│   └── prompts/
+│   └── run.sh
 │
 ├── ios/                           # Swift iOS app (see 8.3)
 │   ├── Shrank.xcodeproj
@@ -960,8 +850,8 @@ shrank/
 │   └── screenshots/
 │
 ├── scripts/
-│   ├── setup-mac.sh              # Install mlx-vlm, download model, configure Tailscale
-│   ├── setup-linux-nvidia.sh     # Alternative: Ollama + NVIDIA GPU
+│   ├── setup-mac.sh              # Install vllm-mlx, download model, configure Tailscale
+│   ├── setup-linux-nvidia.sh     # Alternative: vLLM + NVIDIA GPU
 │   └── dev.sh                    # Start all services for development
 │
 └── config/
@@ -976,11 +866,11 @@ shrank/
 
 **Goal**: Server receives an image, runs it through Gemma 4, stores structured result, basic web UI shows it.
 
-- [ ] Initialize monorepo with Rust workspace, Python sidecar, React scaffold
+- [ ] Initialize monorepo with Rust workspace, vllm-mlx config, React scaffold
 - [ ] SQLite schema: documents table, FTS5 index, migrations
 - [ ] Axum server: `POST /api/documents` (multipart upload), `GET /api/documents`, `GET /api/documents/:id`
 - [ ] Image storage: save original, generate thumbnail via libvips
-- [ ] mlx-vlm sidecar: `/extract` endpoint with Gemma 4 26B MoE
+- [ ] vllm-mlx setup: Gemma 4 26B MoE vision extraction via OpenAI-compatible API
 - [ ] Extraction prompt v1 (see Section 11)
 - [ ] Async processing: upload → queue → process → update document
 - [ ] Web UI: document list + detail view with metadata display
@@ -996,7 +886,7 @@ shrank/
 - [ ] FTS5 search endpoint with BM25 ranking and snippet highlighting
 - [ ] Structured filter parsing (field:value syntax)
 - [ ] sqlite-vec integration: generate embeddings at ingest, vector search endpoint
-- [ ] Embedding model setup (nomic-embed-text via Ollama or dedicated)
+- [ ] Embedding model setup (all-MiniLM-L6-v2 via vllm-mlx)
 - [ ] Reciprocal Rank Fusion for hybrid search results
 - [ ] Query router: detect intent, dispatch to appropriate layers
 - [ ] Web UI: search bar, instant results, faceted filters (sender, type, tags, date range)
@@ -1048,7 +938,7 @@ shrank/
 - [ ] Bulk operations in web UI
 - [ ] Export: ZIP of selected documents + metadata as JSON
 - [ ] Configuration documentation + example TOML
-- [ ] Setup scripts for Mac (mlx-vlm) and Linux/NVIDIA (Ollama)
+- [ ] Setup scripts for Mac (vllm-mlx) and Linux/NVIDIA (vLLM)
 - [ ] docker-compose.yml for Linux users
 - [ ] README with demo GIF
 - [ ] CONTRIBUTING.md
@@ -1140,7 +1030,7 @@ IMPORTANT: Output ONLY the JSON object. No other text."""
 ### 11.2 Prompt Optimization Notes
 
 - **Temperature 0.1**: Low temperature for consistent, deterministic extraction. We want the same document to produce the same output every time.
-- **Token budget for images**: Use high token budget (1120) for OCR-heavy documents. This is configurable in mlx-vlm and significantly affects OCR quality.
+- **Token budget for images**: Use high max_tokens (4096) for OCR-heavy documents. This significantly affects OCR quality.
 - **Existing tags injection**: By passing the current tag vocabulary, we guide Gemma to reuse existing tags rather than inventing synonyms. This creates a naturally convergent taxonomy.
 - **Existing senders injection**: Prevents "AOK Bayern" vs "AOK Bayern - Die Gesundheitskasse" drift.
 - **English summary + original-language subject**: The summary is always English for searchability; the subject preserves the document's own language for authenticity.
@@ -1176,27 +1066,21 @@ data_dir = "~/.local/share/shrank"  # SQLite DB + images stored here
 api_key = "sk_your_secret_key_here"  # Generate with: openssl rand -hex 32
 
 [inference]
-# mlx-vlm sidecar (default for Apple Silicon)
-backend = "mlx-vlm"
-endpoint = "http://127.0.0.1:3421"
+# vllm-mlx (default for Apple Silicon)
+backend = "vllm-mlx"
+endpoint = "http://127.0.0.1:8000"
 model = "mlx-community/gemma-4-26b-a4b-it-4bit"
 
-# Alternative: Ollama
-# backend = "ollama"
+# Alternative: Any OpenAI-compatible API (Ollama, vLLM, etc.)
 # endpoint = "http://127.0.0.1:11434"
 # model = "gemma4:26b"
 
-# Alternative: Any OpenAI-compatible API
-# backend = "openai-compatible"
-# endpoint = "http://127.0.0.1:8000/v1"
-# model = "gemma-4-26b"
-
 [embeddings]
-# Embedding model for semantic search
-backend = "ollama"
-model = "nomic-embed-text"
-endpoint = "http://127.0.0.1:11434"
-dimensions = 768
+# Embedding model for semantic search (served by vllm-mlx)
+backend = "vllm-mlx"
+model = "mlx-community/all-MiniLM-L6-v2-4bit"
+endpoint = "http://127.0.0.1:8000"
+dimensions = 384
 
 [images]
 thumbnail_width = 400
@@ -1222,19 +1106,12 @@ brew install python@3.12 rust node
 git clone https://github.com/shrank-io/shrank.git
 cd shrank
 
-# 3. Setup inference sidecar
+# 3. Setup inference (vllm-mlx)
 cd inference
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-# Download model (first run only, ~14GB for 26B MoE 4-bit)
-python -c "from mlx_vlm import load; load('mlx-community/gemma-4-26b-a4b-it-4bit')"
+uv sync
+# Model downloads automatically on first run (~14GB for 26B MoE 4-bit)
 
-# 4. Install embedding model
-brew install ollama
-ollama pull nomic-embed-text
-
-# 5. Build Rust backend
+# 4. Build Rust backend
 cd ../server
 cargo build --release
 
@@ -1256,7 +1133,7 @@ brew install tailscale
 cd ..
 make run
 # Or individually:
-# Terminal 1: cd inference && source .venv/bin/activate && uvicorn server:app --host 127.0.0.1 --port 3421
+# Terminal 1: cd inference && ./run.sh
 # Terminal 2: cd server && cargo run --release
 # Web UI: http://localhost:3420
 ```
@@ -1265,20 +1142,21 @@ make run
 
 ```bash
 # Alternative for Linux users with NVIDIA GPUs
-# Uses Ollama instead of mlx-vlm
+# Uses vLLM instead of vllm-mlx
 
-# 1. Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull gemma4:26b
-ollama pull nomic-embed-text
+# 1. Install vLLM
+pip install vllm
 
-# 2. Update config.toml
+# 2. Start vLLM with Gemma 4
+vllm serve google/gemma-4-26b-a4b-it --port 8000
+
+# 3. Update config.toml
 [inference]
-backend = "ollama"
-endpoint = "http://127.0.0.1:11434"
-model = "gemma4:26b"
+backend = "vllm"
+endpoint = "http://127.0.0.1:8000"
+model = "google/gemma-4-26b-a4b-it"
 
-# 3. Rest of setup is identical (Rust + Node)
+# 4. Rest of setup is identical (Rust + Node)
 ```
 
 ### 12.4 Docker Compose (Linux)
@@ -1358,7 +1236,7 @@ This is a personal, local-network tool. The threat model is:
 
 2. **API Key Authentication**: Every request from the phone includes `Authorization: Bearer sk_<key>`. The key is generated during setup and stored in iOS Keychain. This prevents other Tailscale devices on the same tailnet from accessing documents.
 
-3. **Inference sidecar isolation**: The mlx-vlm sidecar binds to `127.0.0.1:3421` only. Not accessible from any network interface.
+3. **Inference isolation**: vllm-mlx binds to `127.0.0.1:8000` only. Not accessible from any network interface.
 
 4. **No remote code execution**: The LLM output is parsed as JSON only. No `eval()`, no template injection, no code execution paths from LLM responses. The Rust JSON parser (serde_json) is memory-safe.
 
@@ -1394,7 +1272,7 @@ This is a personal, local-network tool. The threat model is:
 
 - **FTS5 German compound words**: The unicode61 tokenizer doesn't decompose compounds like "Krankenversicherungsbeitrag". A custom tokenizer or decomposition preprocessing may be needed. Evaluate ICU tokenizer or pre-splitting with a German morphology library.
 - **sqlite-vec maturity**: Still young. Monitor for stability issues. Fallback plan: write embeddings to a flat file and use faiss or hnswlib.
-- **mlx-vlm API stability**: The library is evolving rapidly. Pin versions carefully.
+- **vllm-mlx API stability**: The library is evolving rapidly. Pin versions carefully.
 - **iOS background sync limits**: iOS aggressively limits background task frequency. The sync interval depends on user behavior (how often they open the app, battery level, network). Document this limitation.
 
 ---
@@ -1455,7 +1333,7 @@ make dev       # Start all services in dev mode
 
 # Individual services
 make server    # Rust backend on :3420
-make inference # mlx-vlm sidecar on :3421
+make inference # vllm-mlx on :8000
 make web       # Vite dev server on :5173 (proxies to :3420)
 ```
 
@@ -1466,8 +1344,7 @@ make web       # Vite dev server on :5173 (proxies to :3420)
 | Web UI | http://localhost:5173 |
 | API | http://localhost:3420/api |
 | API docs | http://localhost:3420/api/docs |
-| Inference health | http://localhost:3421/health |
-| Ollama | http://localhost:11434 |
+| vllm-mlx | http://localhost:8000/v1/models |
 
 ### Database Location
 
