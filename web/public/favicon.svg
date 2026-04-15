@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- V3: Negative space — S cut out of a rounded square -->
+  <defs>
+    <mask id="s-mask">
+      <rect width="512" height="512" fill="white"/>
+      <path d="M332,152 L200,152 C162,152 132,182 132,216 C132,250 162,280 200,280 L312,280 C350,280 380,310 380,344 C380,378 350,408 312,408 L180,408"
+            fill="none" stroke="black" stroke-width="36" stroke-linecap="round"/>
+    </mask>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="#0f172a"/>
+  <rect x="80" y="100" width="352" height="352" rx="40" fill="#64ffda" mask="url(#s-mask)"/>
+</svg>

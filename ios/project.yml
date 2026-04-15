@@ -1,0 +1,54 @@
+name: Shrank
+options:
+  bundleIdPrefix: io.shrank
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: "7.0.0"
+
+targets:
+  Shrank:
+    type: application
+    platform: iOS
+    sources:
+      - path: Shrank
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.shrank.app
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_FILE: Shrank/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Shrank/Shrank.entitlements
+        GENERATE_INFOPLIST_FILE: false
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "Apple Development"
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          CODE_SIGN_IDENTITY: "Apple Distribution"
+          CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - package: GRDB
+
+  ShrankTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ShrankTests
+    dependencies:
+      - target: Shrank
+
+  ShrankUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: ShrankUITests
+    dependencies:
+      - target: Shrank

@@ -14,8 +14,7 @@ web/dist/
 
 # iOS
 ios/build/
-ios/*.xcworkspace/xcuserdata/
-ios/*.xcodeproj/xcuserdata/
+**/xcuserdata/
 ios/DerivedData/
 ios/.build/
 
