@@ -1,18 +1,8 @@
 [project]
 name = "shrank-inference"
 version = "0.1.0"
-description = "Shrank inference sidecar — thin wrapper around vllm-mlx"
+description = "vllm-mlx launcher for Shrank — runs Gemma 4 on Apple Silicon"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.135",
-    "uvicorn>=0.44",
-    "pydantic>=2.11",
-    "httpx>=0.28",
+    "vllm-mlx>=0.2.8",
 ]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["prompts", "parsers"]

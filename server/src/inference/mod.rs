@@ -1,4 +1,5 @@
 mod client;
+mod prompt;
 pub mod extraction;
 pub mod relationships;
 

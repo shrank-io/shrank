@@ -11,8 +11,8 @@ pub async fn health(
     // Check database
     let db_ok = state.db.read().await.is_ok();
 
-    // Check inference sidecar
-    let sidecar_status = match state.inference.health().await {
+    // Check vllm-mlx
+    let inference_status = match state.inference.health().await {
         Ok(status) => status,
         Err(_) => serde_json::json!({ "status": "unavailable" }),
     };
@@ -20,7 +20,7 @@ pub async fn health(
     Ok(Json(serde_json::json!({
         "status": if db_ok { "ok" } else { "degraded" },
         "database": db_ok,
-        "inference": sidecar_status,
+        "inference": inference_status,
         "version": env!("CARGO_PKG_VERSION"),
     })))
 }

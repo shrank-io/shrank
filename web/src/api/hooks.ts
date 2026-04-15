@@ -118,3 +118,16 @@ export function useStats() {
     refetchInterval: 30_000,
   });
 }
+
+// --- Images ---
+
+/** Fetch an image with auth and return an object URL. Revoke on unmount via React Query GC. */
+export function useAuthImage(url: string | undefined) {
+  return useQuery({
+    queryKey: ["image", url],
+    queryFn: () => api.fetchImageAsObjectUrl(url!),
+    enabled: !!url,
+    staleTime: Infinity,
+    gcTime: 5 * 60_000,
+  });
+}

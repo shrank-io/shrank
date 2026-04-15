@@ -77,13 +77,13 @@ pub struct ProcessingConfig {
 // Defaults
 fn default_host() -> String { "0.0.0.0".into() }
 fn default_port() -> u16 { 3420 }
-fn default_inference_backend() -> String { "mlx-vlm".into() }
-fn default_inference_endpoint() -> String { "http://127.0.0.1:3421".into() }
+fn default_inference_backend() -> String { "vllm-mlx".into() }
+fn default_inference_endpoint() -> String { "http://127.0.0.1:8000".into() }
 fn default_inference_model() -> String { "mlx-community/gemma-4-26b-a4b-it-4bit".into() }
-fn default_embeddings_backend() -> String { "ollama".into() }
-fn default_embeddings_model() -> String { "nomic-embed-text".into() }
-fn default_embeddings_endpoint() -> String { "http://127.0.0.1:11434".into() }
-fn default_dimensions() -> usize { 768 }
+fn default_embeddings_backend() -> String { "vllm-mlx".into() }
+fn default_embeddings_model() -> String { "mlx-community/all-MiniLM-L6-v2-4bit".into() }
+fn default_embeddings_endpoint() -> String { "http://127.0.0.1:8000".into() }
+fn default_dimensions() -> usize { 384 }
 fn default_thumbnail_width() -> u32 { 400 }
 fn default_thumbnail_format() -> String { "webp".into() }
 fn default_thumbnail_quality() -> u8 { 80 }

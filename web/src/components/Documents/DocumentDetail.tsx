@@ -18,6 +18,7 @@ import {
   useDeleteDocument,
   useReprocessDocument,
   useRelatedDocuments,
+  useAuthImage,
 } from "../../api/hooks";
 import type { DocumentUpdate } from "../../api/types";
 import ImageViewer from "../common/ImageViewer";
@@ -37,6 +38,7 @@ export default function DocumentDetailView({ id }: { id: string }) {
   const navigate = useNavigate();
   const { data: doc, isLoading } = useDocument(id);
   const { data: graph } = useRelatedDocuments(id, 1);
+  const { data: imageObjectUrl } = useAuthImage(originalUrl(id));
   const updateMut = useUpdateDocument();
   const deleteMut = useDeleteDocument();
   const reprocessMut = useReprocessDocument();
@@ -114,7 +116,7 @@ export default function DocumentDetailView({ id }: { id: string }) {
         </div>
         <div className="h-[calc(100%-48px)]">
           <ImageViewer
-            src={originalUrl(doc.id)}
+            src={imageObjectUrl ?? ""}
             alt={doc.subject ?? "Document"}
           />
         </div>

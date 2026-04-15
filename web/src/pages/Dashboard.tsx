@@ -10,6 +10,7 @@ import { useStats, useDocuments } from "../api/hooks";
 import { thumbnailUrl } from "../api/client";
 import StatusBadge from "../components/common/StatusBadge";
 import TagBadge from "../components/common/TagBadge";
+import AuthImage from "../components/common/AuthImage";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -122,7 +123,7 @@ export default function Dashboard() {
                 className="flex items-center gap-3 rounded-lg border border-edge bg-surface p-3 transition-colors hover:border-accent/30"
               >
                 <div className="h-10 w-8 flex-shrink-0 overflow-hidden rounded bg-surface-raised">
-                  <img
+                  <AuthImage
                     src={thumbnailUrl(doc.id)}
                     alt=""
                     className="h-full w-full object-cover"

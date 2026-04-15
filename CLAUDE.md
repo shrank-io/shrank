@@ -4,14 +4,16 @@ Private, local-first document archive for paper mail. Local AI extracts, categor
 
 ## Architecture
 
-Four components, each in its own directory:
+Three components + vllm-mlx for inference:
 
 | Component | Directory | Tech | Port |
 |-----------|-----------|------|------|
 | Backend API | `server/` | Rust / Axum / SQLite | `:3420` |
-| Inference sidecar | `inference/` | Python / FastAPI / mlx-vlm | `:3421` (localhost only) |
 | Web UI | `web/` | React / Vite / Tailwind | `:5173` (dev) |
 | iOS app | `ios/` | Swift / SwiftUI / GRDB | — |
+| vllm-mlx | (external) | MLX / Gemma 4 | `:8000` (localhost) |
+
+The Rust backend calls vllm-mlx directly via its OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`). Prompt building, JSON parsing, and relationship inference all happen in Rust. The `inference/` directory contains legacy Python sidecar code (no longer used at runtime).
 
 ## Spec and plans
 
@@ -25,7 +27,7 @@ Always read the relevant plan and `docs/SHRANK.md` before making changes.
 
 ## Shared contracts
 
-The sidecar API contract (SHRANK.md Section 5.2) and the REST API endpoints (Section 8.1) are the integration boundaries. Changes to these affect multiple components — don't modify them without considering the other side.
+The REST API endpoints (Section 8.1) are the integration boundary for the web UI and iOS app. The Rust backend talks to vllm-mlx via the OpenAI-compatible API.
 
 ## Conventions
 
@@ -39,11 +41,11 @@ The sidecar API contract (SHRANK.md Section 5.2) and the REST API endpoints (Sec
 ## Dev commands
 
 ```bash
-# Backend
-cd server && cargo run
+# vllm-mlx (must be running before backend)
+vllm-mlx serve mlx-community/gemma-4-26b-a4b-it-4bit --embedding-model mlx-community/all-MiniLM-L6-v2-4bit
 
-# Inference sidecar
-cd inference && source .venv/bin/activate && uvicorn server:app --host 127.0.0.1 --port 3421
+# Backend
+SHRANK_CONFIG=~/.config/shrank/config.toml cargo run   # from server/
 
 # Web UI
 cd web && npm run dev

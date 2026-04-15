@@ -3,6 +3,7 @@ import { FileText, Calendar } from "lucide-react";
 import { thumbnailUrl } from "../../api/client";
 import StatusBadge from "../common/StatusBadge";
 import TagBadge from "../common/TagBadge";
+import AuthImage from "../common/AuthImage";
 import type { Document } from "../../api/types";
 
 function formatDate(iso: string | null): string {
@@ -24,14 +25,10 @@ export default function DocumentCard({ doc }: { doc: Document }) {
     >
       {/* Thumbnail */}
       <div className="relative aspect-[3/4] overflow-hidden bg-surface-raised">
-        <img
+        <AuthImage
           src={thumbnailUrl(doc.id)}
           alt={doc.subject ?? "Document"}
           className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-          loading="lazy"
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = "none";
-          }}
         />
         {/* Fallback when no thumbnail */}
         <div className="absolute inset-0 flex items-center justify-center text-ink-faint">

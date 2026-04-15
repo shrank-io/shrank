@@ -3,6 +3,7 @@ import { Calendar, Building2 } from "lucide-react";
 import { thumbnailUrl } from "../../api/client";
 import StatusBadge from "../common/StatusBadge";
 import TagBadge from "../common/TagBadge";
+import AuthImage from "../common/AuthImage";
 import type { SearchResult } from "../../api/types";
 
 function formatDate(iso: string | null): string {
@@ -38,11 +39,10 @@ export default function SearchResults({
         >
           {/* Thumbnail */}
           <div className="hidden h-24 w-18 flex-shrink-0 overflow-hidden rounded-lg bg-surface-raised sm:block">
-            <img
+            <AuthImage
               src={thumbnailUrl(doc.id)}
               alt=""
               className="h-full w-full object-cover"
-              loading="lazy"
             />
           </div>
 

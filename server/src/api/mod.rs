@@ -4,6 +4,7 @@ use tower_http::services::ServeDir;
 
 use crate::AppState;
 
+mod chat;
 mod documents;
 mod graph;
 mod images;
@@ -34,6 +35,8 @@ pub fn router(state: AppState) -> Router {
         // Images
         .route("/api/images/original/{id}", get(images::original))
         .route("/api/images/thumbnail/{id}", get(images::thumbnail))
+        // Chat
+        .route("/api/chat", post(chat::chat))
         // System
         .route("/api/health", get(system::health))
         .route("/api/stats", get(system::stats))

@@ -143,3 +143,11 @@ export function originalUrl(id: string): string {
 export function thumbnailUrl(id: string): string {
   return `${API_BASE}/images/thumbnail/${id}`;
 }
+
+/** Fetch an image with auth header and return an object URL. */
+export async function fetchImageAsObjectUrl(url: string): Promise<string> {
+  const res = await fetch(url, { headers: getHeaders() });
+  if (!res.ok) throw new Error(`${res.status}`);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
