@@ -29,7 +29,7 @@ pub async fn stats(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let status_counts = db::documents::count_by_status(&state.db).await?;
-    let tags = db::documents::get_all_tags(&state.db).await?;
+    let tag_counts = db::documents::get_tag_counts(&state.db).await?;
     let senders = db::documents::get_all_senders(&state.db).await?;
 
     let total: i64 = status_counts.iter().map(|(_, c)| c).sum();
@@ -39,6 +39,11 @@ pub async fn stats(
         .collect::<serde_json::Map<String, serde_json::Value>>()
         .into();
 
+    let tags: Vec<serde_json::Value> = tag_counts
+        .iter()
+        .map(|(name, count)| serde_json::json!({ "name": name, "count": count }))
+        .collect();
+
     // Compute storage usage
     let data_dir = state.config.data_dir();
     let storage_bytes = dir_size(&data_dir).await;
@@ -46,7 +51,7 @@ pub async fn stats(
     Ok(Json(serde_json::json!({
         "total_documents": total,
         "by_status": status_map,
-        "unique_tags": tags.len(),
+        "unique_tags": tag_counts.len(),
         "unique_senders": senders.len(),
         "tags": tags,
         "storage_bytes": storage_bytes,

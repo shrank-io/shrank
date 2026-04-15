@@ -385,6 +385,32 @@ pub async fn get_all_tags(db: &Db) -> Result<Vec<String>, AppError> {
     .map_err(AppError::from)
 }
 
+pub async fn get_tag_counts(db: &Db) -> Result<Vec<(String, i64)>, AppError> {
+    let conn = db.read().await?;
+    conn.interact(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT tags FROM documents WHERE tags IS NOT NULL AND tags != '[]'",
+        )?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+
+        let mut counts = std::collections::HashMap::new();
+        for row in rows {
+            if let Ok(arr) = serde_json::from_str::<Vec<String>>(&row) {
+                for tag in arr {
+                    *counts.entry(tag).or_insert(0i64) += 1;
+                }
+            }
+        }
+        let mut result: Vec<(String, i64)> = counts.into_iter().collect();
+        result.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok::<Vec<(String, i64)>, rusqlite::Error>(result)
+    })
+    .await?
+    .map_err(AppError::from)
+}
+
 pub async fn get_all_senders(db: &Db) -> Result<Vec<String>, AppError> {
     let conn = db.read().await?;
     conn.interact(|conn| {
