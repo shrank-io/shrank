@@ -40,5 +40,10 @@
     </array>
     <key>NSCameraUsageDescription</key>
     <string>Shrank uses the camera to scan paper documents for your archive.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
 </dict>
 </plist>

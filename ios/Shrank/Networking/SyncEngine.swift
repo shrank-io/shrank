@@ -94,11 +94,16 @@ final class SyncEngine: @unchecked Sendable {
                 let capturedAt = ISO8601DateFormatter().date(from: item.capturedAt) ?? Date()
                 let deviceId = SyncState.getOrCreateDeviceId()
 
-                _ = try await apiClient.uploadDocument(
+                let uploadResponse = try await apiClient.uploadDocument(
                     imageData: imageData,
                     capturedAt: capturedAt,
                     deviceId: deviceId
                 )
+
+                // Remove local stub — the server doc will arrive via sync
+                if uploadResponse.id != item.id {
+                    try? database.deleteDocument(id: item.id)
+                }
 
                 try database.updateUploadStatus(id: item.id, status: .confirmed)
             } catch {
@@ -121,7 +126,8 @@ final class SyncEngine: @unchecked Sendable {
             do {
                 let response = try await apiClient.syncDelta(since: cursor)
 
-                for doc in response.documents {
+                for apiDoc in response.documents {
+                    let doc = apiDoc.toDocument()
                     try database.upsertDocumentFromSync(doc)
 
                     // Download thumbnail if we don't have it
@@ -138,7 +144,7 @@ final class SyncEngine: @unchecked Sendable {
                 } else {
                     // No more pages — save final cursor from last document or current cursor
                     if let lastDoc = response.documents.last {
-                        try database.saveSyncCursor(lastDoc.id, at: Date())
+                        try database.saveSyncCursor(lastDoc.updatedAt, at: Date())
                     }
                     break
                 }

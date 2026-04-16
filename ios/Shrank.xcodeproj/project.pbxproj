@@ -82,7 +82,7 @@
 		D02CDB1BDE5AABF9AD05C607 /* ShrankUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShrankUITests.swift; sourceTree = "<group>"; };
 		DC2A1333CC9E1F633BF50876 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		DDCCEEF7C9941F32A7E897D2 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		ECC08A5ABD0847A701443C71 /* Shrank.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Shrank.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		ECC08A5ABD0847A701443C71 /* Shrank.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Shrank.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -346,7 +346,7 @@
 			mainGroup = 317D0F445E3086D7490A5BE9;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				55500BCCAB63509D9528E433 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				55500BCCAB63509D9528E433 /* XCRemoteSwiftPackageReference "GRDB" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 89B18B2B958BB5AB48F76F68 /* Products */;
@@ -636,6 +636,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HMYK3U7CX2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Shrank/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -692,7 +693,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		55500BCCAB63509D9528E433 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+		55500BCCAB63509D9528E433 /* XCRemoteSwiftPackageReference "GRDB" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/groue/GRDB.swift";
 			requirement = {
@@ -705,7 +706,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		B067ADFF6372E73036C7B96E /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 55500BCCAB63509D9528E433 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			package = 55500BCCAB63509D9528E433 /* XCRemoteSwiftPackageReference "GRDB" */;
 			productName = GRDB;
 		};
 /* End XCSwiftPackageProductDependency section */

@@ -76,7 +76,7 @@ struct SearchView: View {
             if apiClient.isConfigured {
                 if let remoteResponse = try? await apiClient.search(query: text) {
                     guard !Task.isCancelled else { return }
-                    mergeRemoteResults(remoteResponse.results.map(\.document))
+                    mergeRemoteResults(remoteResponse.results.map { $0.document.toDocument() })
                 }
             }
         }

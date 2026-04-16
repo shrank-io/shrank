@@ -1,31 +1,88 @@
 import Foundation
 
-// MARK: - Response types
+// MARK: - API response types (match backend snake_case JSON)
 
 struct UploadResponse: Codable {
     let id: String
     let status: String
 }
 
-struct SyncResponse: Codable {
-    let documents: [Document]
+struct APISyncResponse: Codable {
+    let documents: [APIDocument]
     let nextCursor: String?
 }
 
-struct SearchResult: Codable {
-    let document: Document
+struct APIDocument: Codable {
+    let id: String
+    let createdAt: String
+    let updatedAt: String
+    let capturedAt: String
+    let status: String
+    let language: String?
+    let sender: String?
+    let senderNormalized: String?
+    let documentDate: String?
+    let documentType: String?
+    let subject: String?
+    let extractedText: String?
+    let amounts: [Amount]?
+    let dates: [DateEntry]?
+    let referenceIds: [ReferenceId]?
+    let tags: [String]?
+    let confidence: Double?
+    let thumbnailUrl: String?
+
+    func toDocument() -> Document {
+        let encoder = JSONEncoder()
+        return Document(
+            id: id,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            capturedAt: capturedAt,
+            syncedAt: ISO8601DateFormatter().string(from: Date()),
+            originalPath: "",
+            thumbnailPath: thumbnailUrl ?? "",
+            status: DocumentStatus(rawValue: status) ?? .pending,
+            processingError: nil,
+            rawLlmResponse: nil,
+            language: language,
+            sender: sender,
+            senderNormalized: senderNormalized,
+            documentDate: documentDate,
+            documentType: documentType,
+            subject: subject,
+            extractedText: extractedText,
+            amounts: (try? encoder.encode(amounts)).flatMap { String(data: $0, encoding: .utf8) },
+            dates: (try? encoder.encode(dates)).flatMap { String(data: $0, encoding: .utf8) },
+            referenceIds: (try? encoder.encode(referenceIds)).flatMap { String(data: $0, encoding: .utf8) },
+            tags: (try? encoder.encode(tags)).flatMap { String(data: $0, encoding: .utf8) },
+            confidence: confidence
+        )
+    }
+}
+
+struct APISearchResult: Codable {
+    let document: APIDocument
     let score: Double
     let matchSources: [String]?
 }
 
-struct SearchResponse: Codable {
-    let results: [SearchResult]
+struct APISearchResponse: Codable {
+    let results: [APISearchResult]
     let total: Int
 }
 
 struct HealthResponse: Codable {
     let status: String
 }
+
+// MARK: - Shared decoder
+
+private let apiDecoder: JSONDecoder = {
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    return decoder
+}()
 
 // MARK: - API Client
 
@@ -94,19 +151,19 @@ final class APIClient: @unchecked Sendable {
     // MARK: - Sync
 
     func registerDevice(deviceId: String) async throws {
-        let body = try JSONEncoder().encode(["device_id": deviceId])
+        let body = try JSONEncoder().encode(["client_id": deviceId])
         let (_, response) = try await request(path: "/api/sync/register", method: "POST", body: body)
         try validateResponse(response)
     }
 
-    func syncDelta(since cursor: String?, limit: Int = 50) async throws -> SyncResponse {
+    func syncDelta(since cursor: String?, limit: Int = 50) async throws -> APISyncResponse {
         var path = "/api/sync?limit=\(limit)"
         if let cursor {
             path += "&since=\(cursor)"
         }
         let (data, response) = try await request(path: path, method: "GET")
         try validateResponse(response)
-        return try JSONDecoder().decode(SyncResponse.self, from: data)
+        return try apiDecoder.decode(APISyncResponse.self, from: data)
     }
 
     // MARK: - Thumbnails
@@ -119,12 +176,12 @@ final class APIClient: @unchecked Sendable {
 
     // MARK: - Search
 
-    func search(query: String, limit: Int = 20, offset: Int = 0) async throws -> SearchResponse {
+    func search(query: String, limit: Int = 20, offset: Int = 0) async throws -> APISearchResponse {
         let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
         let path = "/api/search?q=\(encoded)&limit=\(limit)&offset=\(offset)"
         let (data, response) = try await request(path: path, method: "GET")
         try validateResponse(response)
-        return try JSONDecoder().decode(SearchResponse.self, from: data)
+        return try apiDecoder.decode(APISearchResponse.self, from: data)
     }
 
     // MARK: - Private helpers
