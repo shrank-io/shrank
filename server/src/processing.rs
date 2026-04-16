@@ -44,33 +44,59 @@ async fn process_document(state: &AppState, doc_id: &str) -> Result<(), AppError
     // 1. Set status to processing
     db::documents::update_status(&state.db, doc_id, "processing", None).await?;
 
-    // 2. Read the original image
     let doc = db::documents::get(&state.db, doc_id).await?;
-    let img_path = state.config.data_dir().join(&doc.original_path);
-    let img_bytes = tokio::fs::read(&img_path).await?;
 
-    // 3. Get existing tags and senders for consistency hints
+    // ---------------------------------------------------------------
+    // Pass 1: OCR (image → markdown)
+    // Skip if ocr_markdown already exists (e.g. reprocess only re-runs pass 2)
+    // ---------------------------------------------------------------
+    let ocr_markdown = if let Some(ref existing) = doc.ocr_markdown {
+        tracing::info!(doc_id, "skipping OCR pass — using existing markdown");
+        existing.clone()
+    } else {
+        tracing::info!(doc_id, "pass 1: OCR");
+        let img_path = state.config.data_dir().join(&doc.original_path);
+        let img_bytes = tokio::fs::read(&img_path).await?;
+
+        let markdown = state.inference.ocr(&img_bytes).await?;
+
+        // Store immediately so it survives crashes
+        db::documents::update_ocr_markdown(&state.db, doc_id, &markdown).await?;
+
+        tracing::info!(doc_id, chars = markdown.len(), "pass 1 complete");
+        markdown
+    };
+
+    // ---------------------------------------------------------------
+    // Pass 2: Extraction (markdown → structured JSON)
+    // ---------------------------------------------------------------
+    tracing::info!(doc_id, "pass 2: extraction");
+
     let tags = db::documents::get_all_tags(&state.db).await?;
     let senders = db::documents::get_all_senders(&state.db).await?;
 
-    // 4. Call sidecar /extract
-    let raw_response = state.inference.extract(&img_bytes, &tags, &senders).await?;
+    let raw_response = state
+        .inference
+        .extract(&ocr_markdown, &tags, &senders)
+        .await?;
 
-    // 5. Parse and validate
+    // Parse and validate
     let extraction = inference::extraction::parse(&raw_response)?;
 
-    // 6. Update document with extracted metadata
+    // Update document with extracted metadata
     db::documents::update_extraction(&state.db, doc_id, &extraction).await?;
 
-    // 7. Infer relationships (entities, edges)
+    tracing::info!(doc_id, "pass 2 complete");
+
+    // ---------------------------------------------------------------
+    // Post-processing: relationships + embedding
+    // ---------------------------------------------------------------
     inference::relationships::infer(&state.db, doc_id, &extraction).await?;
 
-    // 8. Generate embedding from extracted text
     if let Some(ref text) = extraction.extracted_text {
         if !text.is_empty() {
             match state.inference.embed(text).await {
                 Ok(_embedding) => {
-                    // TODO: store embedding in sqlite-vec when integrated
                     tracing::debug!(doc_id, "embedding generated");
                 }
                 Err(e) => {

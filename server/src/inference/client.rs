@@ -95,6 +95,38 @@ struct EmbeddingData {
     embedding: Vec<f32>,
 }
 
+/// Strip Gemma 4 thinking channel from LLM output.
+/// Handles `<|channel>thought\n...<channel|>` and unclosed blocks.
+fn strip_thinking_channel(text: &str) -> String {
+    // If the closing tag exists, take everything after it
+    if let Some(end) = text.find("<channel|>") {
+        let after = text[end + "<channel|>".len()..].trim();
+        if !after.is_empty() {
+            return after.to_string();
+        }
+        // Closing tag exists but nothing after it — fall through to use thinking content
+    }
+
+    // Strip the opening tag and "thought" marker, keep the rest as-is.
+    // The model's "thinking" often IS the useful output when enable_thinking
+    // isn't respected — it contains structured analysis of the document.
+    if let Some(start) = text.find("<|channel>") {
+        let after_tag = &text[start + "<|channel>".len()..];
+        // Skip the "thought\n" line
+        let content = if after_tag.starts_with("thought") {
+            after_tag
+                .find('\n')
+                .map(|i| &after_tag[i + 1..])
+                .unwrap_or(after_tag)
+        } else {
+            after_tag
+        };
+        return content.trim().to_string();
+    }
+
+    text.to_string()
+}
+
 impl InferenceClient {
     pub fn new(inference: &InferenceConfig, embeddings: &EmbeddingsConfig) -> Self {
         let http = reqwest::Client::builder()
@@ -116,24 +148,17 @@ impl InferenceClient {
         }
     }
 
-    /// Extract structured data from a document image via vllm-mlx vision.
-    pub async fn extract(
-        &self,
-        image_bytes: &[u8],
-        existing_tags: &[String],
-        existing_senders: &[String],
-    ) -> Result<serde_json::Value, AppError> {
+    /// Pass 1: OCR — send document image, get back markdown text.
+    pub async fn ocr(&self, image_bytes: &[u8]) -> Result<String, AppError> {
         use base64::Engine;
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
-
-        let user_prompt = prompt::build_extraction_prompt(existing_tags, existing_senders);
 
         let body = ChatCompletionRequest {
             model: self.model.clone(),
             messages: vec![
                 ChatMessage::Text {
                     role: "system".into(),
-                    content: prompt::EXTRACTION_SYSTEM_PROMPT.into(),
+                    content: prompt::OCR_SYSTEM_PROMPT.into(),
                 },
                 ChatMessage::Multimodal {
                     role: "user".into(),
@@ -143,8 +168,71 @@ impl InferenceClient {
                                 url: format!("data:image/jpeg;base64,{image_base64}"),
                             },
                         },
-                        ContentPart::Text { text: user_prompt },
+                        ContentPart::Text {
+                            text: prompt::OCR_USER_PROMPT.into(),
+                        },
                     ],
+                },
+            ],
+            max_tokens: 4096,
+            temperature: 0.1,
+            chat_template_kwargs: ChatTemplateKwargs {
+                enable_thinking: false,
+            },
+        };
+
+        let resp = self
+            .http
+            .post(format!("{}/v1/chat/completions", self.endpoint))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AppError::Inference(format!("vllm-mlx OCR request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(AppError::Inference(format!(
+                "vllm-mlx OCR returned {status}: {text}"
+            )));
+        }
+
+        let completion: ChatCompletionResponse = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Inference(format!("failed to parse OCR response: {e}")))?;
+
+        let raw_text = completion
+            .choices
+            .first()
+            .map(|c| c.message.content.clone())
+            .ok_or_else(|| AppError::Inference("vllm-mlx OCR returned no choices".into()))?;
+
+        // Strip thinking channel tokens from OCR output
+        let text = strip_thinking_channel(&raw_text);
+        Ok(text)
+    }
+
+    /// Pass 2: Extract structured data from OCR text (text-only, no image).
+    pub async fn extract(
+        &self,
+        ocr_text: &str,
+        existing_tags: &[String],
+        existing_senders: &[String],
+    ) -> Result<serde_json::Value, AppError> {
+        let user_prompt =
+            prompt::build_extraction_prompt(ocr_text, existing_tags, existing_senders);
+
+        let body = ChatCompletionRequest {
+            model: self.model.clone(),
+            messages: vec![
+                ChatMessage::Text {
+                    role: "system".into(),
+                    content: prompt::EXTRACTION_SYSTEM_PROMPT.into(),
+                },
+                ChatMessage::Text {
+                    role: "user".into(),
+                    content: user_prompt,
                 },
             ],
             max_tokens: 4096,

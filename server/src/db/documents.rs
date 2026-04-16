@@ -23,6 +23,7 @@ pub struct Document {
     pub document_type: Option<String>,
     pub subject: Option<String>,
     pub extracted_text: Option<String>,
+    pub ocr_markdown: Option<String>,
     pub amounts: Option<serde_json::Value>,
     pub dates: Option<serde_json::Value>,
     pub reference_ids: Option<serde_json::Value>,
@@ -54,6 +55,7 @@ pub(super) fn document_from_row(row: &Row<'_>) -> rusqlite::Result<Document> {
         document_type: row.get("document_type")?,
         subject: row.get("subject")?,
         extracted_text: row.get("extracted_text")?,
+        ocr_markdown: row.get("ocr_markdown")?,
         amounts: amounts_str.and_then(|s| serde_json::from_str(&s).ok()),
         dates: dates_str.and_then(|s| serde_json::from_str(&s).ok()),
         reference_ids: reference_ids_str.and_then(|s| serde_json::from_str(&s).ok()),
@@ -439,11 +441,28 @@ pub async fn count_by_status(db: &Db) -> Result<Vec<(String, i64)>, AppError> {
     .map_err(AppError::from)
 }
 
+pub async fn update_ocr_markdown(db: &Db, id: &str, markdown: &str) -> Result<(), AppError> {
+    let id = id.to_string();
+    let markdown = markdown.to_string();
+    let conn = db.write().await?;
+    conn.interact(move |conn| {
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE documents SET ocr_markdown = ?1, updated_at = ?2 WHERE id = ?3",
+            params![markdown, now, id],
+        )?;
+        Ok::<(), rusqlite::Error>(())
+    })
+    .await?
+    .map_err(AppError::from)
+}
+
 pub async fn reset_for_reprocess(db: &Db, id: &str) -> Result<(), AppError> {
     let id = id.to_string();
     let conn = db.write().await?;
     conn.interact(move |conn| {
         let now = chrono::Utc::now().to_rfc3339();
+        // Keep ocr_markdown — only re-run extraction (pass 2), not OCR (pass 1)
         let rows = conn.execute(
             "UPDATE documents SET
                 status = 'pending', processing_error = NULL,

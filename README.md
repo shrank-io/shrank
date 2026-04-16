@@ -28,15 +28,55 @@ iPhone (SwiftUI)  ◄──  Tailscale  ──►  Mac (M1 Max)
 - **Networking**: Tailscale (WireGuard) — encrypted P2P, no port forwarding
 - **iOS**: Swift / SwiftUI with VisionKit document scanner, offline-first with background sync
 
-## Quick Start
+## Running (Development)
+
+Three services need to run, each in its own terminal. Start them in this order:
+
+### 1. Inference sidecar (vllm-mlx) — port 8000
 
 ```bash
-git clone https://github.com/shrank-io/shrank.git
-cd shrank
-make setup     # Install dependencies
-make dev       # Start all services
-# Open http://localhost:5173
+cd inference
+uv run vllm-mlx serve mlx-community/gemma-4-26b-a4b-it-4bit \
+  --host 127.0.0.1 --port 8000
 ```
+
+Wait until you see `Uvicorn running on http://127.0.0.1:8000` before starting the backend.
+
+### 2. Backend API — port 3420
+
+```bash
+cd server
+SHRANK_CONFIG=~/.config/shrank/config.toml cargo run
+```
+
+On first run this creates the SQLite database at `~/.local/share/shrank/shrank.db` and runs migrations.
+
+Requires a config file at the path above. Minimal config:
+
+```toml
+[server]
+host = "0.0.0.0"
+port = 3420
+data_dir = "~/.local/share/shrank"
+
+[auth]
+api_key = "your-secret-key"
+
+[inference]
+endpoint = "http://127.0.0.1:8000"
+
+[embeddings]
+endpoint = "http://127.0.0.1:8000"
+```
+
+### 3. Web UI — port 5173
+
+```bash
+cd web
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 See [docs/SHRANK.md](docs/SHRANK.md) for the full architecture document.
 

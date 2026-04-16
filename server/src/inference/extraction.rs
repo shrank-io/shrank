@@ -4,6 +4,27 @@ use crate::AppError;
 /// Extract valid JSON from raw LLM output.
 ///
 /// Handles markdown fences, preamble/trailing text, and truncated output.
+/// Expected top-level keys in the extraction JSON.
+/// We use these to distinguish the real payload from stray JSON fragments
+/// in the LLM's thinking output.
+const EXTRACTION_KEYS: &[&str] = &[
+    "language",
+    "sender",
+    "document_type",
+    "extracted_text",
+    "subject",
+    "confidence",
+    "tags",
+];
+
+fn looks_like_extraction(v: &serde_json::Value) -> bool {
+    if let Some(obj) = v.as_object() {
+        EXTRACTION_KEYS.iter().any(|k| obj.contains_key(*k))
+    } else {
+        false
+    }
+}
+
 pub fn parse_llm_json(raw: &str) -> Result<serde_json::Value, AppError> {
     // 0. Strip Gemma 4 thinking channel tokens if present
     let text = strip_thinking_channel(raw.trim());
@@ -14,25 +35,45 @@ pub fn parse_llm_json(raw: &str) -> Result<serde_json::Value, AppError> {
 
     // 2. Try direct parse
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&stripped) {
-        if v.is_object() {
+        if looks_like_extraction(&v) {
             return Ok(v);
         }
     }
 
-    // 3. Find outermost { ... }
-    if let Some(json_str) = extract_braced(&stripped) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-            if v.is_object() {
-                return Ok(v);
+    // 3. Find all { ... } candidates and pick the one that looks like extraction JSON
+    //    Scan from the start, trying each `{` as a potential JSON object start.
+    {
+        let bytes = stripped.as_bytes();
+        let mut pos = 0;
+        while pos < bytes.len() {
+            if bytes[pos] == b'{' {
+                // Try parsing from this position
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&stripped[pos..]) {
+                    if looks_like_extraction(&v) {
+                        return Ok(v);
+                    }
+                }
+                // Also try the outermost braced substring starting here
+                if let Some(end) = find_matching_brace(&stripped[pos..]) {
+                    let candidate = &stripped[pos..pos + end + 1];
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
+                        if looks_like_extraction(&v) {
+                            return Ok(v);
+                        }
+                    }
+                }
             }
+            pos += 1;
         }
     }
 
-    // 4. Try repairing truncated JSON
-    if let Some(repaired) = repair_truncated(&stripped) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&repaired) {
-            if v.is_object() {
-                return Ok(v);
+    // 4. Try repairing truncated JSON (scan the raw input too in case stripping lost it)
+    for source in &[&stripped, &raw.to_string()] {
+        if let Some(repaired) = repair_truncated(source) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&repaired) {
+                if looks_like_extraction(&v) {
+                    return Ok(v);
+                }
             }
         }
     }
@@ -43,20 +84,85 @@ pub fn parse_llm_json(raw: &str) -> Result<serde_json::Value, AppError> {
     )))
 }
 
+/// Find the position of the matching `}` for a string starting with `{`.
+fn find_matching_brace(text: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (i, ch) in text.char_indices() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if ch == '\\' && in_string {
+            escape = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Strip Gemma 4 thinking channel blocks: `<|channel>thought\n...<channel|>`
 fn strip_thinking_channel(text: &str) -> &str {
-    // If the response starts with a thinking block, skip past its end
+    // If the response contains the closing tag, skip past it
     if let Some(end) = text.find("<channel|>") {
         let after = &text[end + "<channel|>".len()..];
         return after.trim();
     }
-    // Also handle case where thinking tokens were partially stripped
-    if text.starts_with("<|channel>") {
-        // Find the end of the thinking block or give up
-        if let Some(pos) = text.find('{') {
-            return &text[pos..];
+
+    // No closing tag — the thinking block may be unclosed (response truncated or
+    // the model just didn't emit a close token). The JSON payload follows the
+    // thinking text. Search for a `{` that looks like the start of our extraction
+    // JSON (i.e. followed by `"language"` or `"sender"` etc.) rather than a
+    // stray brace inside the thinking text.
+    if text.contains("<|channel>") || text.contains("<|thinking|>") {
+        // Try to find the real JSON object start
+        let search = text;
+        let mut pos = 0;
+        while let Some(brace) = search[pos..].find('{') {
+            let abs = pos + brace;
+            let after_brace = &search[abs..];
+            // Check if this looks like our extraction JSON
+            if after_brace.len() > 15 {
+                let peek = &after_brace[1..after_brace.len().min(60)];
+                if peek.contains("\"language\"")
+                    || peek.contains("\"sender\"")
+                    || peek.contains("\"extracted_text\"")
+                    || peek.contains("\"document_type\"")
+                    || peek.contains("\"confidence\"")
+                {
+                    return &search[abs..];
+                }
+            }
+            pos = abs + 1;
+        }
+        // Last resort: skip to the last `{` and hope for the best
+        if let Some(last_brace) = text.rfind('{') {
+            // Only if there's a matching `}`
+            if text[last_brace..].contains('}') {
+                return &text[last_brace..];
+            }
         }
     }
+
     text
 }
 
@@ -80,15 +186,6 @@ fn strip_fences(text: &str) -> String {
     text.to_string()
 }
 
-fn extract_braced(text: &str) -> Option<&str> {
-    let start = text.find('{')?;
-    let end = text.rfind('}')?;
-    if end > start {
-        Some(&text[start..=end])
-    } else {
-        None
-    }
-}
 
 fn repair_truncated(text: &str) -> Option<String> {
     let start = text.find('{')?;

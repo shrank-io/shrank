@@ -21,6 +21,12 @@ pub fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
         tracing::info!("applied migration v1: initial schema");
     }
 
+    if current < 2 {
+        migrate_v2(conn)?;
+        conn.execute("INSERT INTO _migrations (version) VALUES (2)", [])?;
+        tracing::info!("applied migration v2: add ocr_markdown column");
+    }
+
     Ok(())
 }
 
@@ -140,5 +146,12 @@ fn migrate_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
         ",
     )?;
 
+    Ok(())
+}
+
+fn migrate_v2(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "ALTER TABLE documents ADD COLUMN ocr_markdown TEXT;",
+    )?;
     Ok(())
 }

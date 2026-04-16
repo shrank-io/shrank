@@ -60,12 +60,12 @@ pub async fn get_documents_since(
     conn.interact(move |conn| {
         let (sql, bind) = if let Some(ref cursor) = since {
             (
-                "SELECT * FROM documents WHERE id > ?1 ORDER BY id ASC LIMIT ?2",
+                "SELECT * FROM documents WHERE updated_at > ?1 ORDER BY updated_at ASC LIMIT ?2",
                 vec![cursor.clone(), limit.to_string()],
             )
         } else {
             (
-                "SELECT * FROM documents WHERE 1=1 ORDER BY id ASC LIMIT ?1",
+                "SELECT * FROM documents ORDER BY updated_at ASC LIMIT ?1",
                 vec![limit.to_string()],
             )
         };
@@ -105,7 +105,11 @@ pub async fn get_documents_since(
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let next_cursor = docs.last().map(|d| d.id.clone());
+        let next_cursor = if docs.len() as i64 == limit {
+            docs.last().map(|d| d.updated_at.clone())
+        } else {
+            None
+        };
 
         Ok::<SyncResponse, rusqlite::Error>(SyncResponse {
             documents: docs,
